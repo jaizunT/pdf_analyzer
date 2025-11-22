@@ -394,6 +394,7 @@ export default function InsightPDFApp() {
   const [pdfModificationLib, setPdfModificationLib] = useState<any>(null); 
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [fileBuffer, setFileBuffer] = useState<ArrayBuffer | null>(null); 
+  const [pdfName, setPdfName] = useState<string | null>(null);
   
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -404,6 +405,7 @@ export default function InsightPDFApp() {
   
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingSession, setIsExportingSession] = useState(false);
   
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('read'); 
   const [selectionRect, setSelectionRect] = useState<Rect | null>(null);
@@ -473,6 +475,7 @@ export default function InsightPDFApp() {
   const onFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file || !pdfLib) return;
+    setPdfName(file.name);
     const fileReader = new FileReader();
     fileReader.onload = async function() {
       const originalBuffer = this.result as ArrayBuffer;
@@ -818,6 +821,90 @@ export default function InsightPDFApp() {
     }
   };
 
+  const handleExportSession = async () => {
+    if (!fileBuffer || !pdfDoc) {
+      alert("No PDF loaded to export.");
+      return;
+    }
+    setIsExportingSession(true);
+    try {
+      const blob = new Blob([fileBuffer], { type: 'application/pdf' });
+      const pdfBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64 = result.split(',')[1] || '';
+          resolve(base64);
+        };
+        reader.onerror = () => reject(new Error('Failed to read PDF data for session export'));
+        reader.readAsDataURL(blob);
+      });
+
+      const sessionPayload = {
+        schemaVersion: 1,
+        createdAt: new Date().toISOString(),
+        pdf: {
+          name: pdfName || 'document.pdf',
+          dataBase64: pdfBase64,
+        },
+        annotations,
+      };
+
+      const jsonBlob = new Blob([JSON.stringify(sessionPayload, null, 2)], { type: 'application/json' });
+      const baseName = (pdfName || 'insight_session').replace(/\.pdf$/i, '');
+      downloadBlob(jsonBlob, `${baseName}.insightpdf.json`);
+    } catch (err) {
+      console.error('Session export failed', err);
+      alert('Failed to export session.');
+    } finally {
+      setIsExportingSession(false);
+    }
+  };
+
+  const handleSessionFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!pdfLib) {
+      alert('PDF Engine is still loading. Please wait a moment and try again.');
+      event.target.value = '';
+      return;
+    }
+    try {
+      const text = await file.text();
+      const session = JSON.parse(text);
+      if (!session.pdf || !session.pdf.dataBase64 || !session.annotations) {
+        alert('Invalid session file.');
+        event.target.value = '';
+        return;
+      }
+
+      const pdfBase64: string = session.pdf.dataBase64;
+      const binaryString = atob(pdfBase64);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const buffer = bytes.buffer;
+      const bufferForExport = buffer.slice(0);
+      setFileBuffer(bufferForExport);
+      setPdfName(session.pdf.name || file.name);
+
+      const typedarray = new Uint8Array(buffer);
+      const loadingTask = pdfLib.getDocument(typedarray);
+      const doc = await loadingTask.promise;
+      setPdfDoc(doc);
+      setNumPages(doc.numPages);
+      setCurrentPage(1);
+      setAnnotations(session.annotations as Annotation[]);
+    } catch (error) {
+      console.error(error);
+      alert('Error loading session file.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   const closeModal = () => {
     setShowAnnotationModal(false);
     setPendingAnnotation(null);
@@ -840,15 +927,30 @@ export default function InsightPDFApp() {
             <span className="text-sm font-medium">Upload</span>
             <input type="file" accept=".pdf" onChange={onFileChange} className="hidden" />
           </label>
+          <label className="flex items-center space-x-2 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-md cursor-pointer hover:bg-amber-100 transition">
+            <FileText size={16} />
+            <span className="text-sm font-medium">Load Session</span>
+            <input type="file" accept=".json,application/json" onChange={handleSessionFileChange} className="hidden" />
+          </label>
           {annotations.length > 0 && (
-            <button 
-              onClick={handleDownloadPdf}
-              disabled={isExporting || !pdfModificationLib}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-md cursor-pointer hover:bg-gray-50 transition disabled:opacity-50 shrink-0"
-            >
-              {isExporting ? <Loader2 className="animate-spin" size={16}/> : <Download size={16} />}
-              <span className="text-sm font-medium">Export PDF</span>
-            </button>
+            <>
+              <button 
+                onClick={handleDownloadPdf}
+                disabled={isExporting || !pdfModificationLib}
+                className="flex items-center space-x-2 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-md cursor-pointer hover:bg-gray-50 transition disabled:opacity-50 shrink-0"
+              >
+                {isExporting ? <Loader2 className="animate-spin" size={16}/> : <Download size={16} />}
+                <span className="text-sm font-medium">Export PDF</span>
+              </button>
+              <button 
+                onClick={handleExportSession}
+                disabled={isExportingSession || !fileBuffer}
+                className="flex items-center space-x-2 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-md cursor-pointer hover:bg-gray-50 transition disabled:opacity-50 shrink-0"
+              >
+                {isExportingSession ? <Loader2 className="animate-spin" size={16}/> : <SaveIcon size={16} />}
+                <span className="text-sm font-medium">Export Session</span>
+              </button>
+            </>
           )}
         </div>
 
