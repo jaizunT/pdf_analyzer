@@ -22,6 +22,9 @@ import {
   GripVertical
 } from 'lucide-react';
 
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
+
 // --- Types ---
 
 type AnnotationType = 'text_highlight' | 'region_crop' | 'page_note';
@@ -49,6 +52,47 @@ interface Annotation {
   timestamp: number;
   providerUsed?: LLMProvider;
 }
+
+const renderTextWithLatex = (text: string) => {
+  const segments: React.ReactNode[] = [];
+  if (!text) return segments;
+
+  const regex = /(\$\$[^$]+\$\$|\$[^$]+\$)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    const matchText = match[0];
+    const index = match.index;
+
+    if (index > lastIndex) {
+      segments.push(text.slice(lastIndex, index));
+    }
+
+    const isDisplay = matchText.startsWith('$$');
+    const content = isDisplay ? matchText.slice(2, -2) : matchText.slice(1, -1);
+
+    try {
+      const html = katex.renderToString(content, { throwOnError: false, displayMode: isDisplay });
+      segments.push(
+        <span
+          key={`${index}-${isDisplay ? 'd' : 'i'}`}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      );
+    } catch {
+      segments.push(matchText);
+    }
+
+    lastIndex = index + matchText.length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push(text.slice(lastIndex));
+  }
+
+  return segments;
+};
 
 // --- LLM Services ---
 
@@ -171,13 +215,15 @@ const PDFPage = ({
   onTextSelection,
   selectionRect,
   isInteractingWithThisPage,
-  setPageRef
+  setPageRef,
+  onAnnotationClick,
 }: any) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const renderTaskRef = useRef<any>(null); // Track the active render task
   const [isRendering, setIsRendering] = useState(true);
+  const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
 
   useEffect(() => {
     if (setPageRef && pageRef.current) {
@@ -282,38 +328,57 @@ const PDFPage = ({
       )}
 
       {/* Persistent Highlights */}
-      {annotations.map((ann: Annotation) => {
-         if (ann.type === 'text_highlight' && ann.rects && ann.rects.length > 0) {
-          return (
-            <React.Fragment key={ann.id}>
-              {ann.rects.map((r, i) => (
-                <div
-                  key={`${ann.id}-${i}`}
-                  className="absolute bg-yellow-500/20 hover:bg-yellow-500/30 cursor-pointer transition z-10 mix-blend-multiply"
-                  style={{
-                    left: `${r.x * 100}%`,
-                    top: `${r.y * 100}%`,
-                    width: `${r.w * 100}%`,
-                    height: `${r.h * 100}%`
-                  }}
-                  title={ann.userPrompt}
-                />
-              ))}
-            </React.Fragment>
-          );
+      {annotations.map((ann: Annotation, index: number) => {
+        let anchorX: number | null = null;
+        let anchorY: number | null = null;
+
+        if (ann.type === 'text_highlight' && ann.rects && ann.rects.length > 0) {
+          const r = ann.rects[0];
+          // Place the icon in the middle of the right margin (not flush to the edge),
+          // vertically aligned with the middle of the annotated region.
+          anchorX = 0.90;
+          anchorY = r.y + r.h / 2;
+        } else if (ann.rect) {
+          const r = ann.rect;
+          anchorX = 0.90;
+          anchorY = r.y + r.h / 2;
         }
+
+        if (anchorX === null || anchorY === null) return null;
+
         return (
           <div
             key={ann.id}
-            className={`absolute border-2 cursor-pointer transition z-10 ${ann.type === 'region_crop' ? 'border-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20' : 'border-yellow-500 bg-yellow-500/20 hover:bg-yellow-500/30'}`}
-            style={{ 
-              left: `${ann.rect!.x * 100}%`, 
-              top: `${ann.rect!.y * 100}%`, 
-              width: `${ann.rect!.w * 100}%`, 
-              height: `${ann.rect!.h * 100}%` 
+            className="absolute z-20 cursor-pointer"
+            style={{
+              left: `${anchorX * 100}%`,
+              top: `${anchorY * 100}%`,
+              transform: 'translateY(-50%)',
             }}
-            title={ann.userPrompt || "Annotation"}
-          />
+            onClick={() => onAnnotationClick && onAnnotationClick(ann)}
+            onMouseEnter={() => setHoveredAnnotationId(ann.id)}
+            onMouseLeave={() => setHoveredAnnotationId(null)}
+          >
+            <div className="relative flex items-center justify-center">
+              <div className="rounded-full bg-yellow-300 text-[10px] font-bold text-gray-900 shadow px-1.5 py-0.5 border border-yellow-500">
+                {index + 1}
+              </div>
+
+              {hoveredAnnotationId === ann.id && (
+                <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 bg-yellow-50 border border-yellow-300 shadow-lg rounded-2xl px-4 py-3 w-[420px] max-w-[60vw] text-xs text-gray-900 z-30">
+                  {ann.selectedText && (
+                    <p className="mb-1 italic text-gray-500 line-clamp-3">"{renderTextWithLatex(ann.selectedText)}"</p>
+                  )}
+                  {ann.llmResponse && (
+                    <p className="mb-1 whitespace-pre-wrap">{renderTextWithLatex(ann.llmResponse)}</p>
+                  )}
+                  {ann.manualNote && (
+                    <p className="mt-1 text-gray-700"><span className="font-semibold">Note:</span> {renderTextWithLatex(ann.manualNote)}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         );
       })}
     </div>
@@ -473,6 +538,14 @@ export default function InsightPDFApp() {
     }
   };
 
+  const handleAnnotationClick = (ann: Annotation) => {
+    setTargetAnnotationId(ann.id);
+    const el = document.getElementById(`annotation-card-${ann.id}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
   // --- Sidebar Resize Logic ---
   const startResizing = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -593,13 +666,37 @@ export default function InsightPDFApp() {
     if (!apiKey) { alert("Please enter an API Key."); return; }
     setIsProcessing(true);
     try {
-      const systemPrompt = "You are a helpful academic assistant explaining PDF content.";
+      const systemPrompt = "You are a helpful academic assistant specializing in deep learning and machine learning. The user is typically reading research papers and Berkeley CS182 course materials in PDF form. Your responses will be saved as short inline comments/annotations attached to specific regions of these PDFs, so they must be concise, highly relevant to the provided context, and read naturally when revisited later. Provide clear, rigorous explanations and summaries, and when helpful, express mathematical notation using LaTeX (delimited by $...$ or $$...$$).";
       let query = promptInput;
       if (actionType === 'explain') query = "Explain this in detail, focusing on clarity and key concepts.";
       else if (actionType === 'summarize') query = "Provide a concise summary of this.";
       else if (actionType === 'custom' && !query.trim()) query = "Explain this.";
+      let pageText = '';
+      if (pdfDoc && pendingAnnotation?.pageNumber) {
+        try {
+          const page = await pdfDoc.getPage(pendingAnnotation.pageNumber);
+          const textContent: any = await page.getTextContent();
+          const items = Array.isArray(textContent.items) ? textContent.items : [];
+          pageText = items.map((it: any) => it.str).join(' ');
+          const maxPageChars = 8000;
+          if (pageText.length > maxPageChars) {
+            pageText = pageText.slice(0, maxPageChars) + ' ... [truncated]';
+          }
+        } catch (err) {
+          console.error('Failed to extract page text for LLM context', err);
+        }
+      }
 
-      const context = { text: pendingAnnotation?.selectedText, image: pendingAnnotation?.imageBase64 };
+      const contextParts: string[] = [];
+      if (pageText) {
+        contextParts.push(`PAGE CONTEXT (page ${pendingAnnotation?.pageNumber}):\n${pageText}`);
+      }
+      if (pendingAnnotation?.selectedText) {
+        contextParts.push(`FOCUSED SELECTION:\n"${pendingAnnotation.selectedText}"`);
+      }
+
+      const contextText = contextParts.join('\n\n') || pendingAnnotation?.selectedText || '';
+      const context = { text: contextText, image: pendingAnnotation?.imageBase64 };
       
       let responseText = "";
       if (provider === 'gemini') responseText = await callGemini(apiKey, systemPrompt, query, context);
@@ -654,62 +751,62 @@ export default function InsightPDFApp() {
     }
     setIsExporting(true);
     try {
-      const { PDFDocument, rgb, StandardFonts } = pdfModificationLib;
+      const { PDFDocument, PDFName, PDFArray, PDFString } = pdfModificationLib;
       const pdfDoc = await PDFDocument.load(fileBuffer);
       const pages = pdfDoc.getPages();
-      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
       annotations.forEach((ann: Annotation) => {
         if (ann.pageNumber <= pages.length) {
           const page = pages[ann.pageNumber - 1];
           const { width, height } = page.getSize();
-          const rectsToDraw = (ann.rects && ann.rects.length > 0) ? ann.rects : [ann.rect];
-          rectsToDraw.forEach((r: Rect) => {
-            page.drawRectangle({
-              x: r.x * width, y: height - (r.y * height) - (r.h * height), 
-              width: r.w * width, height: r.h * height,
-              color: rgb(1, 1, 0), opacity: 0.35,
+          let firstRect: Rect | undefined;
+          if (ann.type === 'text_highlight' && ann.rects && ann.rects.length > 0) {
+            firstRect = ann.rects[0];
+          } else if (ann.rect) {
+            firstRect = ann.rect;
+          }
+
+          if (firstRect) {
+            const noteSize = 16;
+            const rightEdge = firstRect.x + firstRect.w;
+            const anchorX = Math.min(0.97, rightEdge + 0.02);
+            const anchorY = firstRect.y;
+
+            const baseX = anchorX * width;
+            const baseY = height - (anchorY * height); // top edge in PDF coords
+
+            const x1 = baseX;
+            const y1 = baseY - noteSize;
+            const x2 = baseX + noteSize;
+            const y2 = baseY;
+
+            const annotsKey = PDFName.of('Annots');
+            let annotsArray = page.node.lookup(annotsKey) as any;
+            if (!annotsArray) {
+              annotsArray = pdfDoc.context.obj([]);
+              page.node.set(annotsKey, annotsArray);
+            }
+
+            const noteParts: string[] = [];
+            if (ann.userPrompt) noteParts.push(`Q: ${ann.userPrompt}`);
+            if (ann.llmResponse) noteParts.push(`AI: ${ann.llmResponse}`);
+            if (ann.manualNote) noteParts.push(`Note: ${ann.manualNote}`);
+            const noteText = noteParts.join('\n\n') || 'Annotation';
+
+            const annotationDict = pdfDoc.context.obj({
+              Type: PDFName.of('Annot'),
+              Subtype: PDFName.of('Text'),
+              Rect: [x1, y1, x2, y2],
+              Open: false,
+              Name: PDFName.of('Note'),
+              Contents: PDFString.of(noteText),
             });
-          });
-          page.drawText(`#${annotations.indexOf(ann) + 1}`, {
-            x: (rectsToDraw[0].x * width) - 15, y: height - (rectsToDraw[0].y * height) - 10,
-            size: 10, font: helveticaBold, color: rgb(1, 0, 0),
-          });
+
+            const annotationRef = pdfDoc.context.register(annotationDict);
+            annotsArray.push(annotationRef);
+          }
         }
       });
-
-      let summaryPage = pdfDoc.addPage();
-      let { width, height } = summaryPage.getSize();
-      let yOffset = height - 50;
-      summaryPage.drawText('InsightPDF Summary', { x: 50, y: yOffset, size: 24, font: helveticaBold, color: rgb(0, 0, 0) });
-      yOffset -= 40;
-
-      for (let i = 0; i < annotations.length; i++) {
-        const ann = annotations[i];
-        if (yOffset < 100) { summaryPage = pdfDoc.addPage(); yOffset = height - 50; }
-        
-        summaryPage.drawText(`#${i + 1} [Page ${ann.pageNumber}]`, { x: 50, y: yOffset, size: 12, font: helveticaBold });
-        yOffset -= 15;
-        if (ann.userPrompt) {
-           summaryPage.drawText(`Q: ${ann.userPrompt}`, { x: 50, y: yOffset, size: 10, font: helveticaBold });
-           yOffset -= 12;
-        }
-        if (ann.llmResponse) {
-           const words = ann.llmResponse.replace(/\n/g, ' ').split(' ');
-           let line = 'AI: ';
-           for (const word of words) {
-             if (line.length + word.length > 90) {
-                summaryPage.drawText(line, { x: 50, y: yOffset, size: 10, font: helvetica });
-                yOffset -= 12;
-                line = word + ' ';
-             } else { line += word + ' '; }
-           }
-           summaryPage.drawText(line, { x: 50, y: yOffset, size: 10, font: helvetica });
-           yOffset -= 12;
-        }
-        yOffset -= 20;
-      }
 
       const pdfBytes = await pdfDoc.save();
       downloadBlob(new Blob([pdfBytes], { type: 'application/pdf' }), 'annotated_document.pdf');
@@ -821,6 +918,7 @@ export default function InsightPDFApp() {
                  selectionRect={selectionRect}
                  isInteractingWithThisPage={activePage === (index + 1)}
                  setPageRef={(p: number, ref: HTMLDivElement) => pageRefs.current.set(p, ref)}
+                 onAnnotationClick={handleAnnotationClick}
                />
              ))
           )}
@@ -864,8 +962,9 @@ export default function InsightPDFApp() {
                   annotations.map(ann => (
                     <div 
                       key={ann.id} 
-                      className={`bg-white border rounded-xl p-4 shadow-sm hover:shadow-md transition group cursor-pointer ${currentPage === ann.pageNumber ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-gray-200'}`}
-                      onClick={() => jumpToAnnotation(ann)}
+                      id={`annotation-card-${ann.id}`}
+                      className={`bg-white border rounded-xl p-4 shadow-sm hover:shadow-md transition group cursor-pointer ${currentPage === ann.pageNumber ? 'border-indigo-200 ring-1 ring-indigo-100' : 'border-gray-200'} ${targetAnnotationId === ann.id ? 'border-indigo-400 ring-2 ring-indigo-300' : ''}`}
+                      onClick={() => { jumpToAnnotation(ann); handleAnnotationClick(ann); }}
                     >
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center space-x-2">
@@ -888,7 +987,7 @@ export default function InsightPDFApp() {
                       {ann.llmResponse && (
                         <div className="mb-3">
                           <div className="text-xs uppercase font-bold text-gray-400 mb-1 flex items-center"><BrainCircuit size={12} className="mr-1" /> AI Explanation</div>
-                          <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{ann.llmResponse}</p>
+                          <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{renderTextWithLatex(ann.llmResponse)}</p>
                         </div>
                       )}
                       
@@ -908,7 +1007,7 @@ export default function InsightPDFApp() {
                           </div>
                         ) : (
                           ann.manualNote ? (
-                            <p className="text-sm text-gray-600"><span className="font-semibold">Note:</span> {ann.manualNote}</p>
+                            <p className="text-sm text-gray-600"><span className="font-semibold">Note:</span> {renderTextWithLatex(ann.manualNote)}</p>
                           ) : (
                              !ann.llmResponse && <p className="text-sm text-gray-400 italic">No note attached</p>
                           )
