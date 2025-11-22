@@ -19,7 +19,8 @@ import {
   Sparkles,
   MousePointer2,
   PanelRight,
-  GripVertical
+  GripVertical,
+  RefreshCw,
 } from 'lucide-react';
 
 import katex from 'katex';
@@ -52,6 +53,21 @@ interface Annotation {
   timestamp: number;
   providerUsed?: LLMProvider;
 }
+
+const PROVIDER_MODELS: Record<LLMProvider, { value: string; label: string }[]> = {
+  gemini: [
+    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+  ],
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o mini' },
+  ],
+  anthropic: [
+    { value: 'claude-3-5-sonnet-20240620', label: 'Claude 3.5 Sonnet' },
+    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' },
+  ],
+};
 
 const renderTextWithLatex = (text: string) => {
   const segments: React.ReactNode[] = [];
@@ -96,8 +112,8 @@ const renderTextWithLatex = (text: string) => {
 
 // --- LLM Services ---
 
-const callGemini = async (apiKey: string, systemPrompt: string, userPrompt: string, contextData: { text?: string; image?: string }) => {
-  const baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+const callGemini = async (apiKey: string, model: string, systemPrompt: string, userPrompt: string, contextData: { text?: string; image?: string }) => {
+  const baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const parts: any[] = [];
   
   if (contextData.text) parts.push({ text: `CONTEXT TEXT:\n"${contextData.text}"\n\n` });
@@ -118,7 +134,7 @@ const callGemini = async (apiKey: string, systemPrompt: string, userPrompt: stri
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
 };
 
-const callOpenAI = async (apiKey: string, systemPrompt: string, userPrompt: string, contextData: { text?: string; image?: string }) => {
+const callOpenAI = async (apiKey: string, model: string, systemPrompt: string, userPrompt: string, contextData: { text?: string; image?: string }) => {
   const content: any[] = [{ type: "text", text: userPrompt }];
   if (contextData.text) content.unshift({ type: "text", text: `CONTEXT FROM PDF:\n"${contextData.text}"\n\n` });
   if (contextData.image) content.push({ type: "image_url", image_url: { url: contextData.image } });
@@ -127,7 +143,7 @@ const callOpenAI = async (apiKey: string, systemPrompt: string, userPrompt: stri
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: "gpt-4o",
+      model,
       messages: [{ role: "system", content: systemPrompt }, { role: "user", content: content }],
       max_tokens: 1000
     })
@@ -138,7 +154,7 @@ const callOpenAI = async (apiKey: string, systemPrompt: string, userPrompt: stri
   return data.choices?.[0]?.message?.content || "No response.";
 };
 
-const callAnthropic = async (apiKey: string, systemPrompt: string, userPrompt: string, contextData: { text?: string; image?: string }) => {
+const callAnthropic = async (apiKey: string, model: string, systemPrompt: string, userPrompt: string, contextData: { text?: string; image?: string }) => {
   const content: any[] = [];
   if (contextData.text) content.push({ type: "text", text: `CONTEXT FROM PDF:\n"${contextData.text}"\n\n` });
   if (contextData.image) {
@@ -156,7 +172,7 @@ const callAnthropic = async (apiKey: string, systemPrompt: string, userPrompt: s
       'dangerously-allow-browser': 'true'
     },
     body: JSON.stringify({
-      model: "claude-3-5-sonnet-20240620",
+      model,
       max_tokens: 1000,
       system: systemPrompt,
       messages: [{ role: "user", content }]
@@ -402,6 +418,13 @@ export default function InsightPDFApp() {
   
   const [apiKey, setApiKey] = useState<string>('');
   const [provider, setProvider] = useState<LLMProvider>('gemini');
+  const [modelByProvider, setModelByProvider] = useState<Record<LLMProvider, string>>({
+    gemini: 'gemini-1.5-flash',
+    openai: 'gpt-4o',
+    anthropic: 'claude-3-5-sonnet-20240620',
+  });
+  const [dynamicModels, setDynamicModels] = useState<Partial<Record<LLMProvider, { value: string; label: string }[]>>>({});
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false);
   
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [isExporting, setIsExporting] = useState(false);
@@ -665,6 +688,87 @@ export default function InsightPDFApp() {
   };
 
   // --- Annotation & Logic ---
+
+  const handleRefreshModels = async () => {
+    if (!apiKey) {
+      alert('Enter an API key before refreshing models.');
+      return;
+    }
+
+    setIsRefreshingModels(true);
+    try {
+      let fetched: { value: string; label: string }[] | null = null;
+
+      if (provider === 'openai') {
+        const resp = await fetch('https://api.openai.com/v1/models', {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+          },
+        });
+        if (!resp.ok) {
+          throw new Error('OpenAI model list request failed');
+        }
+        const data = await resp.json();
+        const ids: string[] = (data.data || []).map((m: any) => m.id as string);
+        const filtered = ids.filter((id) =>
+          id.startsWith('gpt-4') ||
+          id.startsWith('gpt-4o') ||
+          id.startsWith('gpt-3.5') ||
+          id.startsWith('o3-')
+        );
+        fetched = filtered.map((id) => ({ value: id, label: id }));
+      } else if (provider === 'gemini') {
+        const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (!resp.ok) {
+          throw new Error('Gemini model list request failed');
+        }
+        const data = await resp.json();
+        const models = (data.models || []) as any[];
+        const filtered = models.filter((m) => {
+          const name: string | undefined = m.name;
+          const methods: string[] = Array.isArray(m.supportedGenerationMethods) ? m.supportedGenerationMethods : [];
+          return typeof name === 'string' && name.includes('models/gemini') && methods.includes('generateContent');
+        });
+        fetched = filtered.map((m) => {
+          const fullName: string = m.name;
+          const id = fullName.split('/').pop() || fullName;
+          const label = m.displayName || id;
+          return { value: id, label };
+        });
+      } else if (provider === 'anthropic') {
+        alert('Dynamic model listing is not available for Anthropic; using static model list.');
+        return;
+      }
+
+      if (fetched && fetched.length > 0) {
+        const base = PROVIDER_MODELS[provider];
+        const seen = new Set(base.map((m) => m.value));
+        const merged = [...base];
+        fetched.forEach((m) => {
+          if (!seen.has(m.value)) {
+            merged.push(m);
+          }
+        });
+
+        setDynamicModels((prev) => ({ ...prev, [provider]: merged }));
+
+        const currentSelected = modelByProvider[provider];
+        const valid = new Set(merged.map((m) => m.value));
+        const nextSelected = valid.has(currentSelected) ? currentSelected : merged[0].value;
+        if (nextSelected !== currentSelected) {
+          setModelByProvider((prev) => ({ ...prev, [provider]: nextSelected }));
+        }
+      } else {
+        alert('No models returned from provider.');
+      }
+    } catch (err: any) {
+      console.error('Model refresh failed', err);
+      alert(`Failed to refresh models: ${err.message || err}`);
+    } finally {
+      setIsRefreshingModels(false);
+    }
+  };
+
   const handleLLMSubmit = async (actionType: 'explain' | 'summarize' | 'custom') => {
     if (!apiKey) { alert("Please enter an API Key."); return; }
     setIsProcessing(true);
@@ -700,11 +804,12 @@ export default function InsightPDFApp() {
 
       const contextText = contextParts.join('\n\n') || pendingAnnotation?.selectedText || '';
       const context = { text: contextText, image: pendingAnnotation?.imageBase64 };
-      
+      const model = modelByProvider[provider];
+
       let responseText = "";
-      if (provider === 'gemini') responseText = await callGemini(apiKey, systemPrompt, query, context);
-      else if (provider === 'openai') responseText = await callOpenAI(apiKey, systemPrompt, query, context);
-      else if (provider === 'anthropic') responseText = await callAnthropic(apiKey, systemPrompt, query, context);
+      if (provider === 'gemini') responseText = await callGemini(apiKey, model, systemPrompt, query, context);
+      else if (provider === 'openai') responseText = await callOpenAI(apiKey, model, systemPrompt, query, context);
+      else if (provider === 'anthropic') responseText = await callAnthropic(apiKey, model, systemPrompt, query, context);
 
       setAnnotations(prev => [...prev, {
         id: Date.now().toString(),
@@ -954,7 +1059,7 @@ export default function InsightPDFApp() {
           )}
         </div>
 
-        <div className="flex-1 max-w-2xl mx-4 flex space-x-2 min-w-0">
+        <div className="flex-1 max-w-2xl mx-4 flex space-x-2 min-w-0 items-center">
           <div className="relative shrink-0">
             <select 
               value={provider} 
@@ -962,10 +1067,32 @@ export default function InsightPDFApp() {
               className="h-full pl-9 pr-8 py-1.5 text-sm border border-gray-300 rounded-md bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:outline-none appearance-none cursor-pointer hover:bg-gray-100 font-medium"
             >
               <option value="gemini">Google Gemini</option>
-              <option value="openai">OpenAI (GPT-4)</option>
-              <option value="anthropic">Anthropic (Claude 3.5)</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
             </select>
             <Settings size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none"/>
+          </div>
+          <div className="flex items-center space-x-1 shrink-0">
+            <div className="relative">
+              <select
+                value={modelByProvider[provider]}
+                onChange={(e) => setModelByProvider(prev => ({ ...prev, [provider]: e.target.value }))}
+                className="h-full pl-3 pr-3 py-1.5 text-sm border border-gray-300 rounded-md bg-gray-50 focus:ring-2 focus:ring-indigo-500 focus:outline-none cursor-pointer hover:bg-gray-100 font-medium max-w-[220px] truncate"
+              >
+                {(dynamicModels[provider] || PROVIDER_MODELS[provider]).map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={handleRefreshModels}
+              disabled={isRefreshingModels}
+              className="p-1.5 rounded-md border border-gray-300 text-gray-500 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Refresh model list from provider API"
+            >
+              {isRefreshingModels ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            </button>
           </div>
           <input 
             type="password"
