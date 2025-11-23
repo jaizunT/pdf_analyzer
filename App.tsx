@@ -52,6 +52,7 @@ interface Annotation {
   manualNote: string;
   timestamp: number;
   providerUsed?: LLMProvider;
+  sequence?: number;
 }
 
 const PROVIDER_MODELS: Record<LLMProvider, { value: string; label: string }[]> = {
@@ -384,11 +385,11 @@ const PDFPage = ({
           >
             <div className="relative flex items-center justify-center">
               <div className="rounded-full bg-yellow-300 text-[10px] font-bold text-gray-900 shadow px-1.5 py-0.5 border border-yellow-500">
-                {index + 1}
+                {ann.sequence ?? index + 1}
               </div>
 
               {hoveredAnnotationId === ann.id && (
-                <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 bg-yellow-50 border border-yellow-300 shadow-lg rounded-2xl px-4 py-3 w-[420px] max-w-[60vw] text-xs text-gray-900 z-30">
+                <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 bg-yellow-50 border border-yellow-300 shadow-lg rounded-2xl px-4 py-3 w-[320px] max-w-[50vw] text-sm text-gray-900 z-30">
                   {ann.selectedText && (
                     <p className="mb-1 italic text-gray-500 line-clamp-3">"{renderTextWithLatex(ann.selectedText)}"</p>
                   )}
@@ -434,6 +435,7 @@ export default function InsightPDFApp() {
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
   
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [nextSequence, setNextSequence] = useState<number>(1);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingSession, setIsExportingSession] = useState(false);
   
@@ -519,6 +521,7 @@ export default function InsightPDFApp() {
         setNumPages(doc.numPages);
         setCurrentPage(1);
         setAnnotations([]); 
+        setNextSequence(1);
       } catch (error) {
         console.error(error);
         alert("Error loading PDF.");
@@ -817,6 +820,8 @@ export default function InsightPDFApp() {
       else if (provider === 'openai') responseText = await callOpenAI(apiKey, model, systemPrompt, query, context);
       else if (provider === 'anthropic') responseText = await callAnthropic(apiKey, model, systemPrompt, query, context);
 
+      const seq = nextSequence;
+      setNextSequence(seq + 1);
       setAnnotations(prev => [...prev, {
         id: Date.now().toString(),
         pageNumber: pendingAnnotation!.pageNumber!,
@@ -829,7 +834,8 @@ export default function InsightPDFApp() {
         llmResponse: responseText,
         manualNote: noteInput,
         timestamp: Date.now(),
-        providerUsed: provider
+        providerUsed: provider,
+        sequence: seq,
       }]);
       closeModal();
     } catch (e: any) {
@@ -840,6 +846,8 @@ export default function InsightPDFApp() {
   };
 
   const handleManualSave = () => {
+    const seq = nextSequence;
+    setNextSequence(seq + 1);
     setAnnotations(prev => [...prev, {
       id: Date.now().toString(),
       pageNumber: pendingAnnotation!.pageNumber!,
@@ -852,7 +860,8 @@ export default function InsightPDFApp() {
       llmResponse: "",
       manualNote: noteInput || "No content",
       timestamp: Date.now(),
-      providerUsed: undefined
+      providerUsed: undefined,
+      sequence: seq,
     }]);
     closeModal();
   };
@@ -1007,7 +1016,15 @@ export default function InsightPDFApp() {
       setPdfDoc(doc);
       setNumPages(doc.numPages);
       setCurrentPage(1);
-      setAnnotations(session.annotations as Annotation[]);
+      const rawAnnotations = session.annotations as Annotation[];
+      let maxSequence = 0;
+      const normalized = rawAnnotations.map((ann: Annotation, index: number) => {
+        const seq = ann.sequence ?? (index + 1);
+        if (seq > maxSequence) maxSequence = seq;
+        return { ...ann, sequence: seq };
+      });
+      setAnnotations(normalized);
+      setNextSequence(maxSequence + 1);
     } catch (error) {
       console.error(error);
       alert('Error loading session file.');
