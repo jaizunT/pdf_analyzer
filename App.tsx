@@ -710,11 +710,10 @@ export default function InsightPDFApp() {
         }
         const data = await resp.json();
         const ids: string[] = (data.data || []).map((m: any) => m.id as string);
+        // Include all chat-style GPT models (past and future), plus "o" family models.
         const filtered = ids.filter((id) =>
-          id.startsWith('gpt-4') ||
-          id.startsWith('gpt-4o') ||
-          id.startsWith('gpt-3.5') ||
-          id.startsWith('o3-')
+          id.startsWith('gpt-') ||
+          id.startsWith('o')
         );
         fetched = filtered.map((id) => ({ value: id, label: id }));
       } else if (provider === 'gemini') {
