@@ -139,14 +139,21 @@ const callOpenAI = async (apiKey: string, model: string, systemPrompt: string, u
   if (contextData.text) content.unshift({ type: "text", text: `CONTEXT FROM PDF:\n"${contextData.text}"\n\n` });
   if (contextData.image) content.push({ type: "image_url", image_url: { url: contextData.image } });
 
+  const useMaxCompletionTokens = model.startsWith('gpt-') || model.startsWith('o');
+  const body: any = {
+    model,
+    messages: [{ role: "system", content: systemPrompt }, { role: "user", content: content }],
+  };
+  if (useMaxCompletionTokens) {
+    body.max_completion_tokens = 1000;
+  } else {
+    body.max_tokens = 1000;
+  }
+
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "system", content: systemPrompt }, { role: "user", content: content }],
-      max_tokens: 1000
-    })
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) throw new Error((await response.json()).error?.message || 'OpenAI Error');
