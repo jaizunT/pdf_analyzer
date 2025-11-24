@@ -74,7 +74,22 @@ const renderTextWithLatex = (text: string) => {
   const segments: React.ReactNode[] = [];
   if (!text) return segments;
 
-  const regex = /(\$\$[^$]+\$\$|\$[^$]+\$)/g;
+  const pushTextSegment = (plain: string) => {
+    if (!plain) return;
+    const parts = plain.split(/(\*\*[^*]+\*\*)/g);
+    parts.forEach(part => {
+      if (!part) return;
+      if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+        const content = part.slice(2, -2);
+        segments.push(<strong>{content}</strong>);
+      } else {
+        segments.push(part);
+      }
+    });
+  };
+
+  // Match $$...$$, $...$, \\[...\\] (display), and \\(...\\) (inline)
+  const regex = /(\$\$[^$]+\$\$|\$[^$]+\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -83,11 +98,18 @@ const renderTextWithLatex = (text: string) => {
     const index = match.index;
 
     if (index > lastIndex) {
-      segments.push(text.slice(lastIndex, index));
+      pushTextSegment(text.slice(lastIndex, index));
     }
 
-    const isDisplay = matchText.startsWith('$$');
-    const content = isDisplay ? matchText.slice(2, -2) : matchText.slice(1, -1);
+    const isDisplay = matchText.startsWith('$$') || matchText.startsWith('\\[');
+    let content: string;
+    if (matchText.startsWith('$$') || matchText.startsWith('\\[')) {
+      content = matchText.slice(2, -2);
+    } else if (matchText.startsWith('$') || matchText.startsWith('\\(')) {
+      content = matchText.slice(1, -1);
+    } else {
+      content = matchText;
+    }
 
     try {
       const html = katex.renderToString(content, { throwOnError: false, displayMode: isDisplay });
@@ -105,7 +127,7 @@ const renderTextWithLatex = (text: string) => {
   }
 
   if (lastIndex < text.length) {
-    segments.push(text.slice(lastIndex));
+    pushTextSegment(text.slice(lastIndex));
   }
 
   return segments;
