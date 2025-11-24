@@ -241,6 +241,7 @@ const PDFPage = ({
   isInteractingWithThisPage,
   setPageRef,
   onAnnotationClick,
+  onAnnotationHover,
   targetAnnotationId,
 }: any) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -381,7 +382,10 @@ const PDFPage = ({
               transform: 'translateY(-50%)',
             }}
             onClick={() => onAnnotationClick && onAnnotationClick(ann)}
-            onMouseEnter={() => setHoveredAnnotationId(ann.id)}
+            onMouseEnter={() => {
+              if (onAnnotationHover) onAnnotationHover(ann);
+              setHoveredAnnotationId(ann.id);
+            }}
             onMouseLeave={() => setHoveredAnnotationId(null)}
           >
             <div className="relative flex items-center justify-center">
@@ -389,16 +393,20 @@ const PDFPage = ({
                 {ann.sequence ?? index + 1}
               </div>
 
-              {(hoveredAnnotationId === ann.id || targetAnnotationId === ann.id) && (
-                <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 bg-yellow-50 border border-yellow-300 shadow-lg rounded-2xl px-4 py-3 w-[320px] max-w-[50vw] text-sm text-gray-900 z-30">
+              {((!targetAnnotationId && hoveredAnnotationId === ann.id) || targetAnnotationId === ann.id) && (
+                <div className="absolute left-full ml-3 top-0 bg-yellow-50 border border-yellow-300 shadow-lg rounded-2xl px-4 py-3 w-[320px] max-w-[50vw] text-sm text-gray-900 z-30">
                   {ann.selectedText && (
                     <p className="mb-1 italic text-gray-500 line-clamp-3">"{renderTextWithLatex(ann.selectedText)}"</p>
                   )}
                   {ann.llmResponse && (
-                    <p className="mb-1 whitespace-pre-wrap overflow-x-auto">{renderTextWithLatex(ann.llmResponse)}</p>
+                    <p className="mb-1 whitespace-pre-wrap overflow-x-auto">
+                      {renderTextWithLatex(ann.llmResponse)}
+                    </p>
                   )}
                   {ann.manualNote && (
-                    <p className="mt-1 text-gray-700 overflow-x-auto"><span className="font-semibold">Note:</span> {renderTextWithLatex(ann.manualNote)}</p>
+                    <p className="mt-1 text-gray-700 overflow-x-auto">
+                      <span className="font-semibold">Note:</span> {renderTextWithLatex(ann.manualNote)}
+                    </p>
                   )}
                 </div>
               )}
@@ -573,6 +581,10 @@ export default function PDFAnalyzerApp() {
         behavior: 'smooth'
       });
     }
+  };
+
+  const handleAnnotationHover = (ann: Annotation) => {
+    setTargetAnnotationId(prev => (prev && prev !== ann.id ? null : prev));
   };
 
   const handleAnnotationClick = (ann: Annotation) => {
@@ -1172,6 +1184,7 @@ export default function PDFAnalyzerApp() {
                  isInteractingWithThisPage={activePage === (index + 1)}
                  setPageRef={(p: number, ref: HTMLDivElement) => pageRefs.current.set(p, ref)}
                  onAnnotationClick={handleAnnotationClick}
+                 onAnnotationHover={handleAnnotationHover}
                  targetAnnotationId={targetAnnotationId}
                />
              ))
