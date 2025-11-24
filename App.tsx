@@ -241,6 +241,7 @@ const PDFPage = ({
   isInteractingWithThisPage,
   setPageRef,
   onAnnotationClick,
+  targetAnnotationId,
 }: any) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
@@ -388,16 +389,16 @@ const PDFPage = ({
                 {ann.sequence ?? index + 1}
               </div>
 
-              {hoveredAnnotationId === ann.id && (
+              {(hoveredAnnotationId === ann.id || targetAnnotationId === ann.id) && (
                 <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 bg-yellow-50 border border-yellow-300 shadow-lg rounded-2xl px-4 py-3 w-[320px] max-w-[50vw] text-sm text-gray-900 z-30">
                   {ann.selectedText && (
                     <p className="mb-1 italic text-gray-500 line-clamp-3">"{renderTextWithLatex(ann.selectedText)}"</p>
                   )}
                   {ann.llmResponse && (
-                    <p className="mb-1 whitespace-pre-wrap">{renderTextWithLatex(ann.llmResponse)}</p>
+                    <p className="mb-1 whitespace-pre-wrap overflow-x-auto">{renderTextWithLatex(ann.llmResponse)}</p>
                   )}
                   {ann.manualNote && (
-                    <p className="mt-1 text-gray-700"><span className="font-semibold">Note:</span> {renderTextWithLatex(ann.manualNote)}</p>
+                    <p className="mt-1 text-gray-700 overflow-x-auto"><span className="font-semibold">Note:</span> {renderTextWithLatex(ann.manualNote)}</p>
                   )}
                 </div>
               )}
@@ -412,7 +413,7 @@ const PDFPage = ({
 
 // --- Main Application ---
 
-export default function InsightPDFApp() {
+export default function PDFAnalyzerApp() {
   // State
   const [pdfLib, setPdfLib] = useState<any>(null); 
   const [pdfModificationLib, setPdfModificationLib] = useState<any>(null); 
@@ -575,7 +576,7 @@ export default function InsightPDFApp() {
   };
 
   const handleAnnotationClick = (ann: Annotation) => {
-    setTargetAnnotationId(ann.id);
+    setTargetAnnotationId(prev => prev === ann.id ? null : ann.id);
     const el = document.getElementById(`annotation-card-${ann.id}`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -971,8 +972,8 @@ export default function InsightPDFApp() {
       };
 
       const jsonBlob = new Blob([JSON.stringify(sessionPayload, null, 2)], { type: 'application/json' });
-      const baseName = (pdfName || 'insight_session').replace(/\.pdf$/i, '');
-      downloadBlob(jsonBlob, `${baseName}.insightpdf.json`);
+      const baseName = (pdfName || 'pdf_analyzer_session').replace(/\.pdf$/i, '');
+      downloadBlob(jsonBlob, `${baseName}.pdf_analyzer.json`);
     } catch (err) {
       console.error('Session export failed', err);
       alert('Failed to export session.');
@@ -1048,7 +1049,7 @@ export default function InsightPDFApp() {
       <header className="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-4 shadow-sm z-30 relative shrink-0">
         <div className="flex items-center space-x-4">
           <div className="flex items-center text-indigo-600 font-bold text-xl">
-            <BrainCircuit className="mr-2" /> InsightPDF
+            <BrainCircuit className="mr-2" /> PDF Analyzer
           </div>
           <label className="flex items-center space-x-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-md cursor-pointer hover:bg-indigo-100 transition">
             <Upload size={16} />
@@ -1171,6 +1172,7 @@ export default function InsightPDFApp() {
                  isInteractingWithThisPage={activePage === (index + 1)}
                  setPageRef={(p: number, ref: HTMLDivElement) => pageRefs.current.set(p, ref)}
                  onAnnotationClick={handleAnnotationClick}
+                 targetAnnotationId={targetAnnotationId}
                />
              ))
           )}

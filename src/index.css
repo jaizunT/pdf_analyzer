@@ -9,3 +9,12 @@ html, body, #root {
   padding: 0;
   overflow: hidden; /* Prevents double scrollbars */
 }
+
+/* KaTeX display equations: wrap within their container instead of overflowing */
+.katex-display {
+  max-width: 100%;
+}
+
+.katex-display > .katex {
+  white-space: normal;
+}
